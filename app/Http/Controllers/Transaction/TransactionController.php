@@ -12,12 +12,23 @@ use Illuminate\Support\Facades\Validator;
 
 class TransactionController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     */
+
     public function index()
     {
-        //
+        try {
+            $transactions = Transaction::with(['item', 'user'])->orderBy('created_at', 'desc')->paginate(15);
+            return response()->json([
+                'status' => true,
+                'message' => 'Success get all transactions',
+                'data' => $transactions
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Failed to get all transactions',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     public function borrow(Request $request)
@@ -40,7 +51,6 @@ class TransactionController extends Controller
 
             $item = Item::findOrFail($request->item_id);
             if ($item->stock < $request->quantity) {
-                DB::rollBack();
                 return response()->json([
                     'status' => false,
                     'message' => 'Insufficient stock for borrowing'
@@ -62,7 +72,7 @@ class TransactionController extends Controller
 
             return response()->json([
                 'status' => true,
-                'message' => 'Success Borrow Item',
+                'message' => 'Success borrow item',
                 'data' => $transaction
             ], 201);
         } catch (\Exception $e) {
@@ -74,35 +84,167 @@ class TransactionController extends Controller
             ], 500);
         }
     }
-    /**
-     * Store a newly created resource in storage.
-     */
-    public function store(Request $request)
+
+    public function return(Request $request)
     {
-        //
+        $validator = Validator::make($request->all(), [
+            'item_id' => 'required|exists:items,id',
+            'quantity' => 'required|integer|min:1',
+            'date' => 'required|date'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => false,
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $item = Item::findOrFail($request->item_id);
+
+            $borrowTransaction = Transaction::where('item_id', $request->item_id)
+                ->where('user_id', Auth::id())
+                ->where('type', 'Borrow')
+                ->where('quantity', '>=', $request->quantity)
+                ->first();
+
+            if (!$borrowTransaction) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'No matching borrow transaction found'
+                ], 400);
+            }
+
+            $transaction = Transaction::create([
+                'item_id' => $request->item_id,
+                'user_id' => Auth::id(),
+                'quantity' => $request->quantity,
+                'type' => 'Return',
+                'date' => $request->date
+            ]);
+
+            $item->stock += $request->quantity;
+            $item->save();
+
+            DB::commit();
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Success return item',
+                'data' => $transaction
+            ], 201);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'status' => false,
+                'message' => 'Failed to return item',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
-    /**
-     * Display the specified resource.
-     */
-    public function show(string $id)
+    public function addStock(Request $request)
     {
-        //
+        $validator = Validator::make($request->all(), [
+            'item_id' => 'required|exists:items,id',
+            'quantity' => 'required|integer|min:1',
+            'date' => 'required|date'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => false,
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $item = Item::findOrFail($request->item_id);
+
+            $transaction = Transaction::create([
+                'item_id' => $request->item_id,
+                'user_id' => Auth::id(),
+                'quantity' => $request->quantity,
+                'type' => 'Add',
+                'date' => $request->date
+            ]);
+
+            $item->stock += $request->quantity;
+            $item->save();
+
+            DB::commit();
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Success add stock',
+                'data' => $transaction
+            ], 201);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'status' => false,
+                'message' => 'Failed to add stock',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, string $id)
+    public function removeStock(Request $request)
     {
-        //
-    }
+        $validator = Validator::make($request->all(), [
+            'item_id' => 'required|exists:items,id',
+            'quantity' => 'required|integer|min:1',
+            'date' => 'required|date'
+        ]);
 
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(string $id)
-    {
-        //
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => false,
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            $item = Item::findOrFail($request->item_id);
+            if ($item->stock < $request->quantity) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Insufficient stock for removal'
+                ], 400);
+            }
+
+            $transaction = Transaction::create([
+                'item_id' => $request->item_id,
+                'user_id' => Auth::id(),
+                'quantity' => $request->quantity,
+                'type' => 'Remove',
+                'date' => $request->date
+            ]);
+
+            $item->stock -= $request->quantity;
+            $item->save();
+
+            DB::commit();
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Success remove stock',
+                'data' => $transaction
+            ], 201);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'status' => false,
+                'message' => 'Failed to add stock',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 }

@@ -53,5 +53,11 @@ Route::middleware(['auth:sanctum', IsAdmin::class])->group(function () {
     Route::delete('/item/{id}', [ItemController::class, 'destroy']);
 
     //Transaction
-    Route::post('/transaction', [TransactionController::class, 'store']);
+    Route::prefix('transaction')->group(function(){
+        Route::get('/', [TransactionController::class, 'index']);
+        Route::post('/borrow', [TransactionController::class, 'borrow']);
+        Route::post('/return', [TransactionController::class, 'return']);
+        Route::post('/add-stock', [TransactionController::class, 'addStock']);
+        Route::post('/remove-stock', [TransactionController::class, 'removeStock']);
+    });
 });
